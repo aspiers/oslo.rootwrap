@@ -71,7 +71,8 @@ class Client(object):
         process_obj = subprocess.Popen(self._start_command,
                                        stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
+                                       stderr=subprocess.PIPE,
+                                       close_fds=True)
         LOG.info("Spawned new rootwrap daemon process with pid=%d",
                  process_obj.pid)
 
