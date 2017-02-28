@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 from oslo_rootwrap import jsonrpc
 from oslo_rootwrap import wrapper
@@ -42,8 +43,11 @@ class RootwrapClass(object):
     def __init__(self, config, filters):
         self.config = config
         self.filters = filters
+        self.reset_timer()
+        self.prepare_timer(config)
 
     def run_one_command(self, userargs, stdin=None):
+        self.reset_timer()
         obj = wrapper.start_subprocess(
             self.filters, userargs,
             exec_dirs=self.config.exec_dirs,
@@ -55,7 +59,40 @@ class RootwrapClass(object):
         out, err = obj.communicate(stdin)
         return obj.returncode, out, err
 
-    def shutdown(self):
+    @classmethod
+    def reset_timer(cls):
+        cls.last_called = time.time()
+
+    @classmethod
+    def cancel_timer(cls):
+        try:
+            cls.timeout.cancel()
+        except RuntimeError:
+            pass
+
+    @classmethod
+    def prepare_timer(cls, config=None):
+        if config is not None:
+            cls.daemon_timeout = config.daemon_timeout
+        # Wait a bit longer to avoid rounding errors
+        timeout = max(
+            cls.last_called + cls.daemon_timeout - time.time(),
+            0) + 1
+        if getattr(cls, 'timeout', None):
+            # Another timer is already initialized
+            return
+        cls.timeout = threading.Timer(timeout, cls.handle_timeout)
+        cls.timeout.start()
+
+    @classmethod
+    def handle_timeout(cls):
+        if cls.last_called < time.time() - cls.daemon_timeout:
+            cls.shutdown()
+
+        cls.prepare_timer()
+
+    @staticmethod
+    def shutdown():
         # Suicide to force break of the main thread
         os.kill(os.getpid(), signal.SIGINT)
 
@@ -125,6 +162,7 @@ def daemon_start(config, filters):
             except Exception:
                 # Most likely the socket have already been closed
                 LOG.debug("Failed to close connection")
+            RootwrapClass.cancel_timer()
         LOG.info("Waiting for all client threads to finish.")
         for thread in threading.enumerate():
             if thread.daemon:
